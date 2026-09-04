@@ -1,4 +1,4 @@
-# SITRAKA — Plateforme Analytique des Données Minières à Madagascar
+# OreMetrics — Plateforme Analytique des Données Minières à Madagascar
 
 Projet complet : nettoyage, EDA, dashboard Streamlit professionnel, API Flask,
 modèle IA (prédiction du risque d'annulation des permis).
