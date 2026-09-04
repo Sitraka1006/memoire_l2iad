@@ -406,7 +406,7 @@ with tab_tit:
     fig_a.update_layout(yaxis={"categoryorder": "total ascending"}, height=480)
     st.plotly_chart(fig_a, use_container_width=True)
 
-# TAB Carte
+# TAB Carte - VERSION CORRIGÉE
 with tab_map:
     st.subheader("Cartographie des permis miniers")
     st.markdown(
@@ -416,36 +416,73 @@ with tab_map:
         "Vous pouvez aussi ouvrir une localité sur OpenStreetMap ou Google Maps.</div>",
         unsafe_allow_html=True,
     )
+    
+    # Nettoyage des données de localisation
     loc_counts = fdf["region_principale"].value_counts().reset_index()
     loc_counts.columns = ["localite", "nombre"]
     loc_counts["lat"] = loc_counts["localite"].map(lambda x: LOCALITY_COORDS.get(x, (None, None))[0])
     loc_counts["lon"] = loc_counts["localite"].map(lambda x: LOCALITY_COORDS.get(x, (None, None))[1])
-    geo_df = loc_counts.dropna(subset=["lat", "lon"])
+    
+    # Supprimer les lignes sans coordonnées
+    geo_df = loc_counts.dropna(subset=["lat", "lon"]).copy()
+    
+    # Convertir en numérique (sécurité)
+    geo_df["lat"] = pd.to_numeric(geo_df["lat"], errors="coerce")
+    geo_df["lon"] = pd.to_numeric(geo_df["lon"], errors="coerce")
+    geo_df["nombre"] = pd.to_numeric(geo_df["nombre"], errors="coerce")
+    
+    # Supprimer les NaN résiduels
+    geo_df = geo_df.dropna(subset=["lat", "lon", "nombre"])
+    
     st.write(f"**{len(geo_df)}** localités géoréférencées sur **{len(loc_counts)}** localités présentes.")
 
     if len(geo_df) > 0:
-        fig_map = px.scatter_mapbox(
-            geo_df, lat="lat", lon="lon", size="nombre", color="nombre",
-            hover_name="localite", hover_data={"nombre": True, "lat": False, "lon": False},
-            color_continuous_scale="YlOrRd", size_max=35, zoom=5.2,
-            center={"lat": -19.5, "lon": 46.5}, mapbox_style="open-street-map",
-            title="Carte interactive — concentration des permis par localité", height=560,
-        )
-        fig_map.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig_map, use_container_width=True)
+        try:
+            fig_map = px.scatter_mapbox(
+                geo_df, 
+                lat="lat", 
+                lon="lon", 
+                size="nombre", 
+                color="nombre",
+                hover_name="localite", 
+                hover_data={"nombre": True, "lat": False, "lon": False},
+                color_continuous_scale="YlOrRd", 
+                size_max=35, 
+                zoom=5.2,
+                center={"lat": -19.5, "lon": 46.5}, 
+                mapbox_style="open-street-map",
+                title="Carte interactive — concentration des permis par localité", 
+                height=560,
+            )
+            fig_map.update_layout(margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig_map, use_container_width=True)
+        except Exception as e:
+            st.error(f"Erreur lors de l'affichage de la carte : {str(e)}")
+            st.info("Vérifiez que les colonnes 'lat' et 'lon' contiennent des valeurs numériques valides.")
+            st.write("Aperçu des données géographiques :")
+            st.dataframe(geo_df.head(10))
 
         if HAS_FOLIUM:
             st.subheader("Carte Folium (alternative)")
-            m = folium.Map(location=[-19.5, 46.5], zoom_start=6, tiles="OpenStreetMap")
-            for _, row in geo_df.iterrows():
-                folium.CircleMarker(
-                    location=[row["lat"], row["lon"]],
-                    radius=min(4 + row["nombre"] * 0.35, 25),
-                    popup=f"<b>{row['localite']}</b><br>{int(row['nombre'])} permis",
-                    tooltip=row["localite"], color="#0f4c5c", fill=True,
-                    fill_color="#2d9f8f", fill_opacity=0.65,
-                ).add_to(m)
-            st_folium(m, width=None, height=500)
+            try:
+                m = folium.Map(location=[-19.5, 46.5], zoom_start=6, tiles="OpenStreetMap")
+                for _, row in geo_df.iterrows():
+                    folium.CircleMarker(
+                        location=[row["lat"], row["lon"]],
+                        radius=min(4 + row["nombre"] * 0.35, 25),
+                        popup=f"<b>{row['localite']}</b><br>{int(row['nombre'])} permis",
+                        tooltip=row["localite"], 
+                        color="#0f4c5c", 
+                        fill=True,
+                        fill_color="#2d9f8f", 
+                        fill_opacity=0.65,
+                    ).add_to(m)
+                st_folium(m, width=None, height=500)
+            except Exception as e:
+                st.warning(f"La carte Folium n'a pas pu être affichée : {str(e)}")
+    else:
+        st.warning("⚠️ Aucune donnée géographique valide à afficher sur la carte.")
+        st.info("Essayez de modifier les filtres pour inclure plus de localités.")
 
     st.subheader("Ouvrir une localité sur un site tiers")
     choice = st.selectbox("Choisir une localité", options=sorted(loc_counts["localite"].unique()),
