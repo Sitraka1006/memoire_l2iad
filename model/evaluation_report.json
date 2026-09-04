@@ -1,0 +1,54 @@
+{
+  "results": {
+    "Regression Logistique": {
+      "accuracy": 0.6054,
+      "precision": 0.2978,
+      "recall": 0.4413,
+      "f1_score": 0.3556,
+      "confusion_matrix": [
+        [
+          497,
+          257
+        ],
+        [
+          138,
+          109
+        ]
+      ]
+    },
+    "Decision Tree": {
+      "accuracy": 0.8382,
+      "precision": 0.6261,
+      "recall": 0.8543,
+      "f1_score": 0.7226,
+      "confusion_matrix": [
+        [
+          628,
+          126
+        ],
+        [
+          36,
+          211
+        ]
+      ]
+    },
+    "Random Forest": {
+      "accuracy": 0.8472,
+      "precision": 0.6478,
+      "recall": 0.834,
+      "f1_score": 0.7292,
+      "confusion_matrix": [
+        [
+          642,
+          112
+        ],
+        [
+          41,
+          206
+        ]
+      ]
+    }
+  },
+  "best_model": "Random Forest",
+  "best_f1": 0.7292
+}
