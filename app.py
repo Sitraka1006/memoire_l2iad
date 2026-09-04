@@ -15,6 +15,8 @@ import json
 import pickle
 import re
 import sqlite3
+import os
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -40,9 +42,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-DATA_DB = Path("data/mining_data.db")
-MODEL_PATH = Path("model/model.pkl")
-EVAL_PATH = Path("model/evaluation_report.json")
+# Déterminer le chemin absolu du répertoire de l'application
+APP_DIR = Path(__file__).parent.absolute()
+
+# Chemins absolus pour Streamlit Cloud
+DATA_DB = APP_DIR / "data" / "mining_data.db"
+MODEL_PATH = APP_DIR / "model" / "model.pkl"
+EVAL_PATH = APP_DIR / "model" / "evaluation_report.json"
 
 st.markdown(
     """
@@ -117,24 +123,60 @@ LOCALITY_COORDS = {
 
 @st.cache_data
 def load_data() -> pd.DataFrame:
-    conn = sqlite3.connect(DATA_DB)
-    df = pd.read_sql("SELECT * FROM permis_miniers", conn)
-    conn.close()
-    df["date_octroi"] = pd.to_datetime(df["date_octroi"], errors="coerce")
-    df["date_fin_validite"] = pd.to_datetime(df["date_fin_validite"], errors="coerce")
-    return df
+    """Charge les données avec gestion d'erreur robuste pour le déploiement"""
+    try:
+        # Vérifier si le fichier existe
+        if not DATA_DB.exists():
+            st.error(f"❌ Base de données introuvable : {DATA_DB}")
+            st.error("Vérifiez que le fichier 'mining_data.db' est bien dans le dossier 'data/'")
+            
+            # Afficher le contenu du répertoire pour déboguer
+            if st.checkbox("Afficher la structure des fichiers pour déboguer"):
+                st.write("📁 Structure du répertoire :")
+                for root, dirs, files in os.walk(APP_DIR):
+                    level = root.replace(str(APP_DIR), '').count(os.sep)
+                    indent = ' ' * 2 * level
+                    st.write(f"{indent}📁 {os.path.basename(root)}/")
+                    subindent = ' ' * 2 * (level + 1)
+                    for file in files:
+                        st.write(f"{subindent}📄 {file}")
+            st.stop()
+        
+        conn = sqlite3.connect(str(DATA_DB))
+        df = pd.read_sql("SELECT * FROM permis_miniers", conn)
+        conn.close()
+        
+        df["date_octroi"] = pd.to_datetime(df["date_octroi"], errors="coerce")
+        df["date_fin_validite"] = pd.to_datetime(df["date_fin_validite"], errors="coerce")
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"❌ Erreur lors du chargement des données : {str(e)}")
+        st.error(f"Chemin recherché : {DATA_DB}")
+        st.stop()
 
 @st.cache_resource
 def load_model():
-    with open(MODEL_PATH, "rb") as f:
-        return pickle.load(f)
+    try:
+        if not MODEL_PATH.exists():
+            st.warning(f"⚠️ Modèle non trouvé : {MODEL_PATH}")
+            return None
+        with open(MODEL_PATH, "rb") as f:
+            return pickle.load(f)
+    except Exception as e:
+        st.warning(f"⚠️ Erreur chargement modèle : {str(e)}")
+        return None
 
 @st.cache_data
 def load_eval_report():
-    if EVAL_PATH.exists():
-        with open(EVAL_PATH) as f:
-            return json.load(f)
-    return None
+    try:
+        if EVAL_PATH.exists():
+            with open(EVAL_PATH) as f:
+                return json.load(f)
+        return None
+    except Exception:
+        return None
 
 def parse_uploaded_file(uploaded) -> pd.DataFrame | None:
     """Support CSV, TSV, XLSX, XLS, ODS, JSON."""
@@ -169,6 +211,7 @@ def extract_substances_list(series: pd.Series) -> list:
                 all_subs.append(p)
     return all_subs
 
+# Chargement des données
 df = load_data()
 model_bundle = load_model()
 eval_report = load_eval_report()
@@ -406,7 +449,7 @@ with tab_tit:
     fig_a.update_layout(yaxis={"categoryorder": "total ascending"}, height=480)
     st.plotly_chart(fig_a, use_container_width=True)
 
-# TAB Carte - VERSION CORRIGÉE
+# TAB Carte - VERSION CORRIGÉE POUR DÉPLOIEMENT
 with tab_map:
     st.subheader("Cartographie des permis miniers")
     st.markdown(
@@ -417,93 +460,107 @@ with tab_map:
         unsafe_allow_html=True,
     )
     
-    # Nettoyage des données de localisation
-    loc_counts = fdf["region_principale"].value_counts().reset_index()
-    loc_counts.columns = ["localite", "nombre"]
-    loc_counts["lat"] = loc_counts["localite"].map(lambda x: LOCALITY_COORDS.get(x, (None, None))[0])
-    loc_counts["lon"] = loc_counts["localite"].map(lambda x: LOCALITY_COORDS.get(x, (None, None))[1])
-    
-    # Supprimer les lignes sans coordonnées
-    geo_df = loc_counts.dropna(subset=["lat", "lon"]).copy()
-    
-    # Convertir en numérique (sécurité)
-    geo_df["lat"] = pd.to_numeric(geo_df["lat"], errors="coerce")
-    geo_df["lon"] = pd.to_numeric(geo_df["lon"], errors="coerce")
-    geo_df["nombre"] = pd.to_numeric(geo_df["nombre"], errors="coerce")
-    
-    # Supprimer les NaN résiduels
-    geo_df = geo_df.dropna(subset=["lat", "lon", "nombre"])
-    
-    st.write(f"**{len(geo_df)}** localités géoréférencées sur **{len(loc_counts)}** localités présentes.")
+    try:
+        # Nettoyage des données de localisation
+        loc_counts = fdf["region_principale"].value_counts().reset_index()
+        loc_counts.columns = ["localite", "nombre"]
+        loc_counts["lat"] = loc_counts["localite"].map(lambda x: LOCALITY_COORDS.get(x, (None, None))[0])
+        loc_counts["lon"] = loc_counts["localite"].map(lambda x: LOCALITY_COORDS.get(x, (None, None))[1])
+        
+        # Supprimer les lignes sans coordonnées
+        geo_df = loc_counts.dropna(subset=["lat", "lon"]).copy()
+        
+        # Convertir en numérique (sécurité)
+        geo_df["lat"] = pd.to_numeric(geo_df["lat"], errors="coerce")
+        geo_df["lon"] = pd.to_numeric(geo_df["lon"], errors="coerce")
+        geo_df["nombre"] = pd.to_numeric(geo_df["nombre"], errors="coerce")
+        
+        # Supprimer les NaN résiduels
+        geo_df = geo_df.dropna(subset=["lat", "lon", "nombre"])
+        
+        st.write(f"**{len(geo_df)}** localités géoréférencées sur **{len(loc_counts)}** localités présentes.")
 
-    if len(geo_df) > 0:
-        try:
-            fig_map = px.scatter_mapbox(
-                geo_df, 
-                lat="lat", 
-                lon="lon", 
-                size="nombre", 
-                color="nombre",
-                hover_name="localite", 
-                hover_data={"nombre": True, "lat": False, "lon": False},
-                color_continuous_scale="YlOrRd", 
-                size_max=35, 
-                zoom=5.2,
-                center={"lat": -19.5, "lon": 46.5}, 
-                mapbox_style="open-street-map",
-                title="Carte interactive — concentration des permis par localité", 
-                height=560,
-            )
-            fig_map.update_layout(margin=dict(l=0, r=0, t=40, b=0))
-            st.plotly_chart(fig_map, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erreur lors de l'affichage de la carte : {str(e)}")
-            st.info("Vérifiez que les colonnes 'lat' et 'lon' contiennent des valeurs numériques valides.")
-            st.write("Aperçu des données géographiques :")
-            st.dataframe(geo_df.head(10))
-
-        if HAS_FOLIUM:
-            st.subheader("Carte Folium (alternative)")
+        if len(geo_df) > 0:
+            # Création de la carte avec gestion d'erreur
             try:
-                m = folium.Map(location=[-19.5, 46.5], zoom_start=6, tiles="OpenStreetMap")
-                for _, row in geo_df.iterrows():
-                    folium.CircleMarker(
-                        location=[row["lat"], row["lon"]],
-                        radius=min(4 + row["nombre"] * 0.35, 25),
-                        popup=f"<b>{row['localite']}</b><br>{int(row['nombre'])} permis",
-                        tooltip=row["localite"], 
-                        color="#0f4c5c", 
-                        fill=True,
-                        fill_color="#2d9f8f", 
-                        fill_opacity=0.65,
-                    ).add_to(m)
-                st_folium(m, width=None, height=500)
+                fig_map = px.scatter_mapbox(
+                    geo_df, 
+                    lat="lat", 
+                    lon="lon", 
+                    size="nombre", 
+                    color="nombre",
+                    hover_name="localite", 
+                    hover_data={"nombre": True, "lat": False, "lon": False},
+                    color_continuous_scale="YlOrRd", 
+                    size_max=35, 
+                    zoom=5.2,
+                    center={"lat": -19.5, "lon": 46.5}, 
+                    mapbox_style="open-street-map",
+                    title="Carte interactive — concentration des permis par localité", 
+                    height=560,
+                )
+                fig_map.update_layout(margin=dict(l=0, r=0, t=40, b=0))
+                st.plotly_chart(fig_map, use_container_width=True)
             except Exception as e:
-                st.warning(f"La carte Folium n'a pas pu être affichée : {str(e)}")
-    else:
-        st.warning("⚠️ Aucune donnée géographique valide à afficher sur la carte.")
-        st.info("Essayez de modifier les filtres pour inclure plus de localités.")
+                st.error(f"Erreur lors de l'affichage de la carte : {str(e)}")
+                st.info("Vérifiez que les colonnes 'lat' et 'lon' contiennent des valeurs numériques valides.")
+                with st.expander("Données envoyées à la carte"):
+                    st.dataframe(geo_df)
+
+            # Carte Folium (optionnelle)
+            if HAS_FOLIUM:
+                st.subheader("Carte Folium (alternative)")
+                try:
+                    m = folium.Map(location=[-19.5, 46.5], zoom_start=6, tiles="OpenStreetMap")
+                    for _, row in geo_df.iterrows():
+                        folium.CircleMarker(
+                            location=[row["lat"], row["lon"]],
+                            radius=min(4 + row["nombre"] * 0.35, 25),
+                            popup=f"<b>{row['localite']}</b><br>{int(row['nombre'])} permis",
+                            tooltip=row["localite"], 
+                            color="#0f4c5c", 
+                            fill=True,
+                            fill_color="#2d9f8f", 
+                            fill_opacity=0.65,
+                        ).add_to(m)
+                    st_folium(m, width=None, height=500)
+                except Exception as e:
+                    st.warning(f"La carte Folium n'a pas pu être affichée : {str(e)}")
+        else:
+            st.warning("⚠️ Aucune donnée géographique valide à afficher sur la carte.")
+            st.info("Essayez de modifier les filtres pour inclure plus de localités.")
+            
+    except Exception as e:
+        st.error(f"❌ Erreur générale dans la carte : {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
     st.subheader("Ouvrir une localité sur un site tiers")
-    choice = st.selectbox("Choisir une localité", options=sorted(loc_counts["localite"].unique()),
-                          index=0 if len(loc_counts) else None)
-    if choice:
-        coords = LOCALITY_COORDS.get(choice)
-        q = choice.replace(" ", "+") + ",+Madagascar"
-        osm_url = f"https://www.openstreetmap.org/search?query={q}"
-        gmaps_url = f"https://www.google.com/maps/search/?api=1&query={q}"
-        if coords:
-            osm_url = f"https://www.openstreetmap.org/?mlat={coords[0]}&mlon={coords[1]}#map=10/{coords[0]}/{coords[1]}"
-            gmaps_url = f"https://www.google.com/maps?q={coords[0]},{coords[1]}"
-        c1, c2 = st.columns(2)
-        c1.markdown(f"[🗺️ Ouvrir dans OpenStreetMap]({osm_url})")
-        c2.markdown(f"[📍 Ouvrir dans Google Maps]({gmaps_url})")
+    try:
+        choice = st.selectbox("Choisir une localité", options=sorted(loc_counts["localite"].unique()),
+                              index=0 if len(loc_counts) else None)
+        if choice:
+            coords = LOCALITY_COORDS.get(choice)
+            q = choice.replace(" ", "+") + ",+Madagascar"
+            osm_url = f"https://www.openstreetmap.org/search?query={q}"
+            gmaps_url = f"https://www.google.com/maps/search/?api=1&query={q}"
+            if coords:
+                osm_url = f"https://www.openstreetmap.org/?mlat={coords[0]}&mlon={coords[1]}#map=10/{coords[0]}/{coords[1]}"
+                gmaps_url = f"https://www.google.com/maps?q={coords[0]},{coords[1]}"
+            c1, c2 = st.columns(2)
+            c1.markdown(f"[🗺️ Ouvrir dans OpenStreetMap]({osm_url})")
+            c2.markdown(f"[📍 Ouvrir dans Google Maps]({gmaps_url})")
+    except Exception as e:
+        st.warning(f"Erreur dans la sélection des localités : {str(e)}")
 
     st.subheader("Classement des localités")
-    st.dataframe(
-        loc_counts[["localite", "nombre"]].head(30).rename(columns={"localite": "Localité", "nombre": "Nb permis"}),
-        use_container_width=True, hide_index=True,
-    )
+    try:
+        st.dataframe(
+            loc_counts[["localite", "nombre"]].head(30).rename(columns={"localite": "Localité", "nombre": "Nb permis"}),
+            use_container_width=True, hide_index=True,
+        )
+    except Exception as e:
+        st.warning(f"Erreur d'affichage du classement : {str(e)}")
 
 # TAB Temporalité
 with tab_temp:
@@ -585,39 +642,42 @@ with tab_ia:
         in_substance = st.selectbox("Substance principale", substances[:250] if len(substances) > 250 else substances)
 
     if st.button("Prédire le risque d'annulation", type="primary"):
-        model = model_bundle["model"]
-        encoders = model_bundle["encoders"]
-        features = model_bundle["features"]
-
-        def encode_safe(encoder, value):
-            return encoder.transform([value])[0] if value in encoder.classes_ else 0
-
-        row = pd.DataFrame([{
-            "type": encode_safe(encoders["type"], in_type),
-            "nombre_carres": in_carres,
-            "nb_substances": in_nb_subst,
-            "duree_validite_annees": in_duree,
-            "annee_octroi": in_annee,
-            "fa_recent": 1 if in_fa_recent == "Oui" else 0,
-            "region_principale": encode_safe(encoders["region_principale"], in_region),
-            "substance_principale": encode_safe(encoders["substance_principale"], in_substance),
-        }])[features]
-        proba = model.predict_proba(row)[0][1]
-        pred = model.predict(row)[0]
-        if pred == 1:
-            st.error(f"⚠️ Permis classé **à risque d'annulation** (probabilité : {proba:.1%})")
+        if model_bundle is None:
+            st.error("❌ Modèle non chargé. Vérifiez que le fichier model.pkl existe.")
         else:
-            st.success(f"✅ Permis classé **régulier** (probabilité de risque : {proba:.1%})")
-        fig_p = go.Figure(go.Indicator(
-            mode="gauge+number", value=proba * 100, title={"text": "Probabilité de risque (%)"},
-            gauge={"axis": {"range": [0, 100]},
-                   "bar": {"color": "#c0392b" if pred == 1 else "#1a7a6d"},
-                   "steps": [{"range": [0, 30], "color": "#d5f5e3"},
-                             {"range": [30, 60], "color": "#fdebd0"},
-                             {"range": [60, 100], "color": "#f5b7b1"}],
-                   "threshold": {"line": {"color": "black", "width": 2}, "value": 50}}))
-        fig_p.update_layout(height=280)
-        st.plotly_chart(fig_p, use_container_width=True)
+            model = model_bundle["model"]
+            encoders = model_bundle["encoders"]
+            features = model_bundle["features"]
+
+            def encode_safe(encoder, value):
+                return encoder.transform([value])[0] if value in encoder.classes_ else 0
+
+            row = pd.DataFrame([{
+                "type": encode_safe(encoders["type"], in_type),
+                "nombre_carres": in_carres,
+                "nb_substances": in_nb_subst,
+                "duree_validite_annees": in_duree,
+                "annee_octroi": in_annee,
+                "fa_recent": 1 if in_fa_recent == "Oui" else 0,
+                "region_principale": encode_safe(encoders["region_principale"], in_region),
+                "substance_principale": encode_safe(encoders["substance_principale"], in_substance),
+            }])[features]
+            proba = model.predict_proba(row)[0][1]
+            pred = model.predict(row)[0]
+            if pred == 1:
+                st.error(f"⚠️ Permis classé **à risque d'annulation** (probabilité : {proba:.1%})")
+            else:
+                st.success(f"✅ Permis classé **régulier** (probabilité de risque : {proba:.1%})")
+            fig_p = go.Figure(go.Indicator(
+                mode="gauge+number", value=proba * 100, title={"text": "Probabilité de risque (%)"},
+                gauge={"axis": {"range": [0, 100]},
+                       "bar": {"color": "#c0392b" if pred == 1 else "#1a7a6d"},
+                       "steps": [{"range": [0, 30], "color": "#d5f5e3"},
+                                 {"range": [30, 60], "color": "#fdebd0"},
+                                 {"range": [60, 100], "color": "#f5b7b1"}],
+                       "threshold": {"line": {"color": "black", "width": 2}, "value": 50}}))
+            fig_p.update_layout(height=280)
+            st.plotly_chart(fig_p, use_container_width=True)
 
 # TAB Données
 with tab_data:
