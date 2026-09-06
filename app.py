@@ -37,7 +37,7 @@ except ImportError:
 
 st.set_page_config(
     page_title="OreMetrics | Données Minières Madagascar",
-    page_icon="⛏️",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -277,8 +277,8 @@ st.markdown(
 )
 
 tab_kpi, tab_eda, tab_sub, tab_tit, tab_map, tab_temp, tab_ia, tab_data = st.tabs([
-    "📊 Tableau de bord", "📈 EDA générale", "💎 Substances", "🏢 Titulaires",
-    "🗺️ Carte", "📅 Temporalité", "🤖 Module IA", "🗂️ Données",
+    "Tableau de bord", "EDA générale", "Substances", "Titulaires",
+    "Carte", "Temporalité", "Module IA", "Données",
 ])
 
 # TAB KPI
